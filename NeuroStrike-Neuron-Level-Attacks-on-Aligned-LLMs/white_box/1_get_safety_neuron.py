@@ -147,12 +147,11 @@ def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="de
         for _ in range(num_responses):
             with torch.no_grad():
                 _ = model(**input_tokens)
-        dd
             
     # Concatenate activations for each layer (now shape: [num_prompts, hidden_size])
     for layer_name in activations:
         print(f"Layer {layer_name}: activations: {activations[layer_name]}")
-        dd
+        
     #     # print(f"len(activations[{layer_name}]): '{len(activations[layer_name])}'")
     #     # print(f"Layer {layer_name}: activations shape: {np.array(activations[layer_name]).shape}")
     #     # activations[layer_name] = np.concatenate(activations[layer_name], axis=0)
@@ -169,7 +168,7 @@ def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="de
         #     element_counts = dict(zip(unique_elements, counts))
         #     print(f"element_counts: '{element_counts}'")
         #     print(f"Layer {layer_name}: topk shape: {np.array(topk[layer_name]).shape}")
-    dd
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
