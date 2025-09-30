@@ -149,8 +149,12 @@ def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="de
                 _ = model(**input_tokens)
             
     # Concatenate activations for each layer (now shape: [num_prompts, hidden_size])
-    for layer_name in activations:
-        print(f"Layer {layer_name}: activations: {activations[layer_name]}")
+
+    # TO IMPLEMENT HERE
+    # CONVERTING THE DICT FOR A LAYER TO A 2D ARRAY WITH SHAPE (num_prompts, hidden_size)
+
+    # for layer_name in activations:
+    #     print(f"Layer {layer_name}: activations: {activations[layer_name]}")
         
     #     # print(f"len(activations[{layer_name}]): '{len(activations[layer_name])}'")
     #     # print(f"Layer {layer_name}: activations shape: {np.array(activations[layer_name]).shape}")
