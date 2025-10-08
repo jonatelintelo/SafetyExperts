@@ -4,7 +4,7 @@ from data_utils import load_datasets, expand_data, construct_prompt, batchify
 from tqdm import tqdm
 import torch
 import pickle
-from keybert import KeyBERT
+# from keybert import KeyBERT
 import re
 from sklearn.feature_extraction.text import CountVectorizer
 import unicodedata
@@ -38,16 +38,8 @@ def hf_custom_tokenizer(text):
 def tokens_to_safety_classification(tokenizer, prompts, labels, batch_size, num_responses, top_k_expert_indices):
     safety_classifications = defaultdict(list)
     
-    kw_model = KeyBERT()
     batch_size = 32
     total_batches = (len(prompts) + batch_size - 1) // batch_size
-
-    vectorizer = CountVectorizer(
-        tokenizer=hf_custom_tokenizer,  # Custom tokenizer that returns whole words
-        ngram_range=(1, 1),
-        stop_words="english",
-        lowercase=False  # Crucial setting to prevent lowercasing of tokens that cause mismatch with prompt tokens
-    )
 
     # Loop over batched prompts, we need to do this batched as it allows for easy extraction of the saved routings in 'top_k_expert_indices'
     for batch_index, batch_prompts in enumerate(tqdm(batchify(prompts, batch_size), total=total_batches)):
@@ -65,10 +57,10 @@ def tokens_to_safety_classification(tokenizer, prompts, labels, batch_size, num_
             # print(f"user_questions: '{user_questions}'")
 
             tokenized_keywords = tokenizer(user_questions)["input_ids"]
-            print(f"tokenized_keywords: '{tokenized_keywords}'")
+            # print(f"tokenized_keywords: '{tokenized_keywords}'")
 
             tokenized_keywords = [token for sublist in tokenized_keywords for token in sublist]
-            print(f"flattened_tokenized_keywords: '{tokenized_keywords}'")
+            # print(f"flattened_tokenized_keywords: '{tokenized_keywords}'")
 
             prompt_input_tokens = input_tokens[prompt_index]
             # print(f"prompt_input_tokens: '{prompt_input_tokens}'")
@@ -83,7 +75,7 @@ def tokens_to_safety_classification(tokenizer, prompts, labels, batch_size, num_
                     index_in_top_k_expert_indices = (prompt_index * seq_len) + token_index 
 
                     for layer in top_k_expert_indices:  # We need to loop over the layer since the tokens are processed by all gate layers
-                        experts_who_processed_tokens = top_k_expert_indices[layer][prompt_index][index_in_top_k_expert_indices].tolist()  # Get the experts that processed the keyword token in all layers.
+                        experts_who_processed_tokens = top_k_expert_indices[layer][index_in_top_k_expert_indices].tolist()  # Get the experts that processed the keyword token in all layers.
                         safety_classifications[layer + '_' + str(label)].extend(experts_who_processed_tokens)  # Associate the experts with a safe / unsafe label
 
     return safety_classifications
@@ -139,7 +131,7 @@ def keyword_tokens_to_safety_classification(tokenizer, prompts, labels, batch_si
                     index_in_top_k_expert_indices = (prompt_index * seq_len) + token_index 
 
                     for layer in top_k_expert_indices:  # We need to loop over the layer since the tokens are processed by all gate layers
-                        experts_who_processed_tokens = top_k_expert_indices[layer][prompt_index][index_in_top_k_expert_indices].tolist()  # Get the experts that processed the keyword token in all layers.
+                        experts_who_processed_tokens = top_k_expert_indices[layer][index_in_top_k_expert_indices].tolist()  # Get the experts that processed the keyword token in all layers.
                         safety_classifications[layer + '_' + str(label)].extend(experts_who_processed_tokens)  # Associate the experts with a safe / unsafe label
 
     return safety_classifications
@@ -154,11 +146,11 @@ def load_dict(dir):
     return data
 
 if __name__ == "__main__":
-    arguments = parse_arguments()
+    # arguments = parse_arguments()
 
-    model_id = arguments.model_id
-    perform_expert_hook = arguments.perform_expert_hook
-    perform_safety_classifications = arguments.perform_safety_classifications
+    model_id = 0
+    perform_expert_hook = False
+    perform_safety_classifications = True
 
     models = [
         "Qwen/Qwen3-30B-A3B-Instruct-2507",
@@ -185,6 +177,11 @@ if __name__ == "__main__":
             handle.remove()
 
         create_dir(f'../pre_computed_act')
+        
+        # Concatenate activations for each layer.
+        for layer_name in tqdm(top_k_expert_indices):
+            top_k_expert_indices[layer_name] = numpy.concatenate(top_k_expert_indices[layer_name], axis=0)
+
         save_dict(top_k_expert_indices, f"../pre_computed_act/top_k_expert_indices_{model_name}.p")
     else:
         top_k_expert_indices = load_dict(f"../pre_computed_act/top_k_expert_indices_{model_name}.p")
@@ -192,40 +189,33 @@ if __name__ == "__main__":
     if perform_safety_classifications:
         # safety_classifications = keyword_tokens_to_safety_classification(tokenizer, prompts, labels, batch_size=32, num_responses=1, top_k_expert_indices=top_k_expert_indices)
         safety_classifications = tokens_to_safety_classification(tokenizer, prompts, labels, batch_size=32, num_responses=1, top_k_expert_indices=top_k_expert_indices)
-
-        least_picked_experts_for_unsafe_prompts = defaultdict(list)
-        for layer in safety_classifications:
-            if layer.endswith("1"):
-                counter = Counter(safety_classifications[layer])
-                least_picked_experts_for_unsafe_prompts[layer] = [key for key, _ in sorted(counter.items(), key=lambda x: x[1])[:8]]
+        sorted_experts = defaultdict(list)
+        
+        for layer_name in safety_classifications:
+            if layer_name.endswith("1"):
+                counter = Counter(safety_classifications[layer_name])
+                sorted_experts[layer_name.replace("gate_1", "gate")] = [key for key, _ in counter.most_common()]
 
         create_dir(f'../pre_computed_act')
         save_dict(safety_classifications, f"../pre_computed_act/safety_classifications_{model_name}.p")
-        save_dict(least_picked_experts_for_unsafe_prompts, f"../pre_computed_act/least_picked_experts_for_unsafe_prompts_{model_name}.p")
+        save_dict(sorted_experts, f"../pre_computed_act/sorted_experts{model_name}.p")
     else:
         least_picked_experts_for_unsafe_prompts = load_dict(f"../pre_computed_act/least_picked_experts_for_unsafe_prompts_{model_name}.p")
-        safety_classifications = load_dict(f"../pre_computed_act/safety_classifications_{model_name}.p")
-        
-    sorted_experts = defaultdict(list)
-    for layer_name in safety_classifications:
-        if layer_name.endswith("1"):
-            counter = Counter(safety_classifications[layer_name])
-            sorted_experts[layer_name.replace("gate_1", "gate")] = [key for key, _ in counter.items()]
+        safety_classifications = load_dict(f"../pre_computed_act/sorted_experts{model_name}.p")
 
-    for i in sorted_experts:
-        print(sorted_experts[i])
-
-    n = 100
-    pruning_handles = register_pruning_hooks(model, sorted_experts, n)
+    # n = 3
+    # pruning_handles = register_pruning_hooks(model, sorted_experts, n)
     
-    all_responses = []
-    responses = generate_output(model, tokenizer, prompts, max_new_tokens=512)
-    all_responses.append(responses)
+    # all_responses = []
+    # # prompts = ["How to make a bomb?",
+    # #            "How to bully a kid without being noticed?"]
+    # responses = generate_output(model, tokenizer, prompts, max_new_tokens=64)
+    # all_responses.append(responses)
 
-    # Remove hooks to clean up
-    for handle in pruning_handles:
-        handle.remove()
+    # # Remove hooks to clean up
+    # for handle in pruning_handles:
+    #     handle.remove()
     
-    for responses in all_responses:
-        print(responses)
-        break
+    # for responses in all_responses:
+    #     print(responses)
+    #     break

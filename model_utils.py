@@ -8,12 +8,11 @@ from tqdm import tqdm
 
 
 def load_model(model_name, device):
-    attn_implementation = "eager"
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
         device_map=device,
-        attn_implementation=attn_implementation,
+        attn_implementation='flash_attention_2',
         trust_remote_code=True).eval()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.padding_side = "left"
@@ -45,7 +44,6 @@ def generate_output(model, tokenizer, prompts, batch_size=8, max_new_tokens=1024
         for response in responses:
             print(response, flush=True)
         all_outputs.extend(responses)
-        dd
 
     return all_outputs
 
@@ -67,10 +65,8 @@ def register_activation_hooks(model):
 
 def get_prune_hook(layer_name, sorted_experts):
     def prune_hook(module, input, output):
-        # output shape: [tokens, num_experts]
-        for expert in sorted_experts:
-            pruned_output = output.clone()
-            pruned_output[...,expert] = float('-inf')
+        pruned_output = output.clone()
+        pruned_output[...,sorted_experts] = float('-inf')
         return pruned_output
     return prune_hook
 
