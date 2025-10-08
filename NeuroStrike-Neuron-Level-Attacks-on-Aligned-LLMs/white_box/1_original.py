@@ -82,17 +82,14 @@ def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="de
         for _ in range(num_responses):
             with torch.no_grad():
                 _ = model(**input_tokens)
-        
     # Concatenate activations for each layer (now shape: [num_prompts, hidden_size])
     for layer_name in activations:
         activations[layer_name] = np.concatenate(activations[layer_name], axis=0)
         print(f"Layer {layer_name}: activations shape: {activations[layer_name].shape}")
-    
-    dd
 
 if __name__ == "__main__":    
     # Select the model that you want to test
-    model_id = 0 
+    model_id = 1
 
     # Config for safety neuron extraction
     num_responses = 1
@@ -111,7 +108,8 @@ if __name__ == "__main__":
     max_new_tokens = 128
 
     models = [
-        "Qwen/Qwen3-30B-A3B-Instruct-2507" #0
+        "Qwen/Qwen3-30B-A3B-Instruct-2507", #0
+        "Qwen/Qwen2.5-7B-Instruct",
     ]
 
     model_name = models[model_id].split('/')[-1]

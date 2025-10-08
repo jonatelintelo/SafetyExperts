@@ -40,43 +40,6 @@ def register_pruning_hooks(model, candidate_dict, target_layer):
             # print(f"Pruning hook registered on layer '{layer_name}' for neurons {neuron_indices}")
     return handles
 
-
-# # input.shape: (nr_tokens, hidden_size_input)
-# # gate output.shape: (nr_tokens, hidden_size_output)
-# # expert output.shape: (nr_activations_via_gate, hidden_size)
-# # non-moe output: tensor of shape (batch, seq_length, hidden_size)
-# # seq_len can vary per batch
-# def activation_hook(layer_name):
-#     def hook(module, input, output):
-#         if layer_name.endswith('mlp.gate'):
-#             topk_expert_indices.clear()
-#             nr_tokens.clear()
-#             nr_tokens.append(input[0].shape[0])  # total number of tokens
-#             tk_expert_indices = torch.topk(output, k=8, dim=-1).indices.detach().cpu()  # (nr_tokens, topk_experts)
-
-#             for token_index in range(tk_expert_indices.shape[0]):
-#                 for expert in tk_expert_indices[token_index]:
-#                     topk_expert_indices[expert.item()].append(token_index)
-#                     print(expert.item())
-#                     print(token_index)
-#             dd
-#         else:
-#             act = defaultdict(list)
-#             expert_index = int(layer_name.split('.')[-2])
-#             token_indices = topk_expert_indices.get(expert_index, [])
-            
-#             if not token_indices:
-#                 return  # Skip if no tokens routed to this expert
-#             seq_len = nr_tokens[0] // 32
-#             token_to_prompt = torch.tensor(token_indices) // seq_len
-
-#             # Collect activations per prompt index
-#             for i, prompt_index in enumerate(token_to_prompt):
-#                 act[prompt_index.item()].append(output[i].detach().cpu())
-#             activations[layer_name].append(act)
-            
-#     return hook
-
 def activation_hook(layer_name):
     def hook(module, input, output):
         if layer_name.endswith('mlp.gate'):
@@ -98,8 +61,6 @@ def activation_hook(layer_name):
 
             # Populate topk_expert_indices dictionary
             for expert, token in zip(flat_experts.tolist(), flat_tokens.tolist()):
-                print(f"expert: '{expert}'")
-                print(f"token: '{token}'")
                 topk_expert_indices[expert].append(token)
         else:
             expert_index = int(layer_name.split('.')[-2])
@@ -114,14 +75,24 @@ def activation_hook(layer_name):
             prompt_indices = token_indices_tensor.div(seq_len, rounding_mode='floor')
 
             # Move output to CPU once
-            output_cpu = output.detach().cpu()
+            output_cpu = output.detach().cpu().float()
 
             # Collect activations per prompt index
             act = defaultdict(list)
             for i, prompt_index in enumerate(prompt_indices):
                 act[prompt_index.item()].append(output_cpu[i])
 
-            activations[layer_name].append(act)
+            activations_intermediate[layer_name].append(act)
+
+            # # Collect activations per prompt index
+            # act = defaultdict(list)
+            # for i, prompt_index in enumerate(prompt_indices):
+            #     act[prompt_index.item()].append(output_cpu[i])
+            # prompt_value_list = []
+            # for prompt_index in act:  # Loop over every prompt captured in the batch
+            #     prompt_value_list.append(np.mean(np.array(act[prompt_index]), axis=0, keepdims=True))
+            # print(np.array(prompt_value_list).shape)
+            # activations.setdefault(layer_name, []).append(prompt_value_list)
 
     return hook
 
@@ -138,38 +109,32 @@ def register_activation_hooks(model, target_layers):
 
 def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="default"):
     total_batches = (len(prompts) + batch_size - 1) // batch_size
+    start = 0
     for batch_prompts in tqdm(util.batchify(prompts, batch_size), total=total_batches):
         # Tokenize the batch
         # input_tokens.size = (batch_size, seq_len)
         input_tokens = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
-        # print(f"input_tokens['input_ids'].numel(): '{input_tokens['input_ids'].numel()}'")
-
         for _ in range(num_responses):
             with torch.no_grad():
                 _ = model(**input_tokens)
-        dd
-            
+        start += 1
+        if start == 10:
+            break
     # Concatenate activations for each layer (now shape: [num_prompts, hidden_size])
-    for layer_name in activations:
-        print(f"Layer {layer_name}: activations: {activations[layer_name]}")
-        dd
-    #     # print(f"len(activations[{layer_name}]): '{len(activations[layer_name])}'")
-    #     # print(f"Layer {layer_name}: activations shape: {np.array(activations[layer_name]).shape}")
-    #     # activations[layer_name] = np.concatenate(activations[layer_name], axis=0)
-    #     for prompt_indices_dict in activations[layer_name]:
-    #         prompt_value_array = []
-    #         for prompt_index in prompt_indices_dict:
-    #             prompt_value_array.append(torch.mean(np.array(prompt_indices_dict[prompt_index]).shape, dim=0, keepdim=True))
-    #         activations[layer_name] = prompt_value_array
-    #         print(activations[layer_name])
-    #         dd
-        # print(f"Layer {layer_name}: activations shape: {np.array(activations[layer_name]).shape}")
-        # if layer_name.endswith('mlp.gate'):
-        #     unique_elements, counts = np.unique(topk[layer_name], return_counts=True)
-        #     element_counts = dict(zip(unique_elements, counts))
-        #     print(f"element_counts: '{element_counts}'")
-        #     print(f"Layer {layer_name}: topk shape: {np.array(topk[layer_name]).shape}")
-    dd
+    for layer_name in activations_intermediate:  # Loop over every expert layer
+        activations[layer_name] = np.array([])
+        # print(np.array(activations_intermediate[layer_name]).shape)
+        prompt_value_list = []
+        for prompt_indices_dict in activations_intermediate[layer_name]:  # Loop over batches, 1 dict per batch
+            for prompt_index in prompt_indices_dict:  # Loop over every prompt captured in the batch
+                prompt_value_list.append(np.mean(np.array(prompt_indices_dict[prompt_index]), axis=0, keepdims=True))
+        activations[layer_name] = np.concatenate(prompt_value_list, axis=0)
+        print(f"Layer {layer_name}: activations shape: {activations[layer_name].shape}")
+
+    # for layer_name in activations:  # Loop over every expert layer
+    #     activations[layer_name] = np.concatenate(activations[layer_name], axis=0)
+    #     print(f"Layer {layer_name}: activations shape: {activations[layer_name].shape}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -215,17 +180,24 @@ if __name__ == "__main__":
         questions, labels = util.expand_data(questions, labels, num_responses=num_responses)
     
     print("compute neuron activation")
+    util.create_dir(f'../pre_computed_act')
+
     if compute_neuron_activation:
         prompts = util_model.construct_prompt(tokenizer, model_name, questions)
         # We hook into modules whose names contain "mlp" as a proxy for the Gate/Up layers.
-        activations = defaultdict(list)  # Dictionary: {layer_name: [activation_array for each prompt]}
+        activations_intermediate = defaultdict(list)  # Dictionary: {layer_name: [activation_array for each prompt]}
         topk_expert_indices = defaultdict(list)
+        activations = {}
         nr_tokens = []
         hook_handles = register_activation_hooks(model, ["gate", "up"])
         get_activation(model, prompts, batch_size=32, model_name=model_name)
         # Remove hooks to clean up
         for handle in hook_handles:
             handle.remove()
+        util.save_dict(activations, f"../pre_computed_act/activations_{model_name}.p")
+    else:
+        activations = util.load_dict(f"../pre_computed_act/activations_{model_name}.p")
+
     
     print("compute safety neurons")
     # Compute safety neurons
