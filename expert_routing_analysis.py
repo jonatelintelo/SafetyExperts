@@ -1,5 +1,5 @@
 import numpy
-from model_utils import load_model, register_activation_hooks, register_pruning_hooks, generate_output, construct_judge_prompt, moderate
+from model_utils import load_model, register_activation_hooks, register_pruning_hooks, generate_output
 from data_utils import load_datasets, expand_data, construct_prompt, batchify
 from tqdm import tqdm
 import torch
@@ -34,6 +34,59 @@ def get_activation(model, prompts, batch_size, num_responses):
 
 def hf_custom_tokenizer(text):
     return re.findall(r'\s*\S+', text) 
+
+def tokens_to_safety_classification(tokenizer, prompts, labels, batch_size, num_responses, top_k_expert_indices):
+    safety_classifications = defaultdict(list)
+    
+    kw_model = KeyBERT()
+    batch_size = 32
+    total_batches = (len(prompts) + batch_size - 1) // batch_size
+
+    vectorizer = CountVectorizer(
+        tokenizer=hf_custom_tokenizer,  # Custom tokenizer that returns whole words
+        ngram_range=(1, 1),
+        stop_words="english",
+        lowercase=False  # Crucial setting to prevent lowercasing of tokens that cause mismatch with prompt tokens
+    )
+
+    # Loop over batched prompts, we need to do this batched as it allows for easy extraction of the saved routings in 'top_k_expert_indices'
+    for batch_index, batch_prompts in enumerate(tqdm(batchify(prompts, batch_size), total=total_batches)):
+        input_tokens = tokenizer(batch_prompts, return_tensors="np", padding=True, truncation=True)["input_ids"]
+        seq_len = input_tokens.shape[1] // batch_size
+
+        for prompt_index, prompt in enumerate(batch_prompts):  # Loop over all prompts in the batch
+            # print(f"prompt: '{prompt}'")
+
+            label = labels[(batch_index * batch_size) + prompt_index]  # Set the associated label (safe or unsafe)
+            user_questions = []
+            match = re.search(r"<\|im_start\|>user\n(.*?)<\|im_end\|>", prompt, re.DOTALL)  # Search for the user part of the prompt
+            if match:
+                user_questions.append(match.group(1))  # Append only the user part of the prompt to use for keywords search
+            # print(f"user_questions: '{user_questions}'")
+
+            tokenized_keywords = tokenizer(user_questions)["input_ids"]
+            print(f"tokenized_keywords: '{tokenized_keywords}'")
+
+            tokenized_keywords = [token for sublist in tokenized_keywords for token in sublist]
+            print(f"flattened_tokenized_keywords: '{tokenized_keywords}'")
+
+            prompt_input_tokens = input_tokens[prompt_index]
+            # print(f"prompt_input_tokens: '{prompt_input_tokens}'")
+
+            for token in tokenized_keywords:  # Loop over all tokens in keywords
+                token_indices = numpy.where(prompt_input_tokens == token)[0]  # Find the indices where a token of a keyword occurs in the prompt
+
+                for token_index in token_indices:  # Loop over all possible occurences of a keyword token in a prompt
+                    # Set the index for which the token index matches in all collected token routings.
+                    # E.g., token_index is '14' but this does not correspond to the 13th token in all collected routings.
+                    # So we need a calculation to find the routing.
+                    index_in_top_k_expert_indices = (prompt_index * seq_len) + token_index 
+
+                    for layer in top_k_expert_indices:  # We need to loop over the layer since the tokens are processed by all gate layers
+                        experts_who_processed_tokens = top_k_expert_indices[layer][prompt_index][index_in_top_k_expert_indices].tolist()  # Get the experts that processed the keyword token in all layers.
+                        safety_classifications[layer + '_' + str(label)].extend(experts_who_processed_tokens)  # Associate the experts with a safe / unsafe label
+
+    return safety_classifications
 
 def keyword_tokens_to_safety_classification(tokenizer, prompts, labels, batch_size, num_responses, top_k_expert_indices):
     safety_classifications = defaultdict(list)
@@ -137,7 +190,8 @@ if __name__ == "__main__":
         top_k_expert_indices = load_dict(f"../pre_computed_act/top_k_expert_indices_{model_name}.p")
 
     if perform_safety_classifications:
-        safety_classifications = keyword_tokens_to_safety_classification(tokenizer, prompts, labels, batch_size=32, num_responses=1, top_k_expert_indices=top_k_expert_indices)
+        # safety_classifications = keyword_tokens_to_safety_classification(tokenizer, prompts, labels, batch_size=32, num_responses=1, top_k_expert_indices=top_k_expert_indices)
+        safety_classifications = tokens_to_safety_classification(tokenizer, prompts, labels, batch_size=32, num_responses=1, top_k_expert_indices=top_k_expert_indices)
 
         least_picked_experts_for_unsafe_prompts = defaultdict(list)
         for layer in safety_classifications:
@@ -158,20 +212,11 @@ if __name__ == "__main__":
             counter = Counter(safety_classifications[layer_name])
             sorted_experts[layer_name.replace("gate_1", "gate")] = [key for key, _ in counter.items()]
 
+    for i in sorted_experts:
+        print(sorted_experts[i])
+
     n = 100
     pruning_handles = register_pruning_hooks(model, sorted_experts, n)
-
-    # batch_size = 32
-    # total_batches = (len(prompts) + batch_size - 1) // batch_size
-    # start = 0
-    # num_responses = 1
-    # for batch_prompts in tqdm(batchify(prompts, batch_size), total=total_batches):
-    #     # Tokenize the batch
-    #     # input_tokens.size = (batch_size, seq_len)
-    #     input_tokens = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
-    #     for _ in range(num_responses):
-    #         with torch.no_grad():
-    #             _ = model(**input_tokens)
     
     all_responses = []
     responses = generate_output(model, tokenizer, prompts, max_new_tokens=512)
@@ -184,19 +229,3 @@ if __name__ == "__main__":
     for responses in all_responses:
         print(responses)
         break
-
-    # print("Response judgement by llama...")
-    # judge_model_name = "meta-llama/Llama-Guard-3-8B"
-    # judge_model, judge_tokenizer = load_model(judge_model_name, device="auto")
-    # for responses in all_responses:
-    #     judge_prompts = construct_judge_prompt(judge_tokenizer, questions, responses)
-    #     jailbreaking_counter = 0
-    #     judge_outputs = []
-    #     for i, judge_prompt in enumerate(judge_prompts):
-    #         judge_output = moderate(judge_model, judge_tokenizer, judge_prompt)
-    #         judge_outputs.append(judge_output)
-            
-    #         if 'unsafe' in judge_output and not any(keyword in  str(responses[i]) for keyword in ["I cannot", "I **cannot**", "I will not", "I **will not**"]):
-    #             jailbreaking_counter+=1
-
-    #     print(f"Success rate: {jailbreaking_counter}/{len(questions)}")

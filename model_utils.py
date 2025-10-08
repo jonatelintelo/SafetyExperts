@@ -42,60 +42,16 @@ def generate_output(model, tokenizer, prompts, batch_size=8, max_new_tokens=1024
         generated_tokens = [output[ids.shape[-1]:] for ids, output in zip(input_ids, output_ids["sequences"])]
         responses = ([tokenizer.decode(generated_tokens[i], skip_special_tokens=True) for i in range(len(generated_tokens))])
         # Decode the generated outputs
-        # responses = [clean_generated_text(tokenizer.decode(generated_tokens[i], skip_special_tokens=True)) for i in range(len(generated_tokens))]
         for response in responses:
             print(response, flush=True)
         all_outputs.extend(responses)
+        dd
 
     return all_outputs
 
-def clean_generated_text(text):
-    """Cleans generated text by removing unwanted prefixes like 'Assistant:', '\n', or leading spaces."""
-    # if model_name.startswith("DeepSeek"):
-    text = extract_text_after_think(text)
-    text = text.strip()  # Remove leading/trailing whitespace or newlines
-    text = re.sub(r"^(assistant\n|Assistant:|AI:|Bot:|Response:|Reply:|.:)\s*", "", text, flags=re.IGNORECASE)  # Remove AI labels if present
-    text = text.strip()  # Remove leading/trailing whitespace or newlines
-    return text
-
-def extract_text_after_think(response: str) -> str:
-    # Find all occurrences of </think>
-    think_matches = list(re.finditer(r"</think>", response))
-
-    if think_matches:
-        # Get the last occurrence
-        last_think_index = think_matches[-1].end()
-        return response[last_think_index:].lstrip()  # Strip leading spaces/newlines
-    return response  # No </think> tag, return entire response
-
-def construct_judge_prompt(tokenizer, questions, responses):
-    prompts = []
-    for question, response in zip(questions, responses):
-        if not response.strip():
-            response = "Sorry, I cannot assist with that."
-        response = extract_text_after_think(response)
-        chat = [
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": str(response).replace('[', '').replace(']', '')},
-        ]
-        # prompt = tokenizer.apply_chat_template(chat, tokenize=False)
-        prompts.append(chat)
-    return prompts
-
-def moderate(model, tokenizer, prompt):
-    input_ids = tokenizer.apply_chat_template(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        output = model.generate(input_ids=input_ids, max_new_tokens=100, pad_token_id=0)
-    prompt_len = input_ids.shape[-1]
-    return tokenizer.decode(output[0][prompt_len:], skip_special_tokens=True)
-
 def get_activation_hook(layer_name, top_k_expert_indices):
     def activation_hook(module, input, output):
-        # sequence_lengths.append(input[0].shape[0] // 32)
-        # print(f"{layer_name} shape of topk: '{numpy.array(torch.topk(output, k=8, dim=-1).indices.cpu()).shape}'")
         top_k_expert_indices[layer_name].append(torch.topk(output, k=8, dim=-1).indices.cpu())  # (nr_tokens, topk_experts)
-        # print(f"top_k_expert_indices[layer_name]: '{top_k_expert_indices[layer_name]}'")
-        # print(f"shape of top_k_expert_indices[layer_name]: '{numpy.array(top_k_expert_indices[layer_name]).shape}'")
     return activation_hook
 
 def register_activation_hooks(model):
@@ -112,14 +68,12 @@ def register_activation_hooks(model):
 def get_prune_hook(layer_name, sorted_experts):
     def prune_hook(module, input, output):
         # output shape: [tokens, num_experts]
-        # print(f"Pruning logits of experts in: '{layer_name}'")
         for expert in sorted_experts:
             pruned_output = output.clone()
-            pruned_output[...,expert] = 1e-9
+            pruned_output[...,expert] = float('-inf')
         return pruned_output
     return prune_hook
 
-# Function to register pruning hooks for all candidate layers
 def register_pruning_hooks(model, sorted_experts, n):
     hook_handles = []
 
@@ -128,5 +82,4 @@ def register_pruning_hooks(model, sorted_experts, n):
             hook_fn = get_prune_hook(layer_name, sorted_experts[layer_name][:n])
             handle = module.register_forward_hook(hook_fn)
             hook_handles.append(handle)
-    
     return hook_handles
