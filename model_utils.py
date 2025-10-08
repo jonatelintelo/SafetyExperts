@@ -43,7 +43,8 @@ def generate_output(model, tokenizer, prompts, batch_size=8, max_new_tokens=1024
         responses = ([tokenizer.decode(generated_tokens[i], skip_special_tokens=True) for i in range(len(generated_tokens))])
         # Decode the generated outputs
         # responses = [clean_generated_text(tokenizer.decode(generated_tokens[i], skip_special_tokens=True)) for i in range(len(generated_tokens))]
-        print(responses, flush=True)
+        for response in responses:
+            print(response, flush=True)
         all_outputs.extend(responses)
 
     return all_outputs
@@ -108,34 +109,13 @@ def register_activation_hooks(model):
             hook_handles.append(handle)
     return hook_handles, top_k_expert_indices
 
-# def get_expert_routing_hook(layer_name, candidate_neurons):
-#     def expert_routing_hook(module, input, output):
-#         print(f"Routing tokens to different experts in layer: '{layer_name}'")
-
-#         # output shape: [batch, seq_length, hidden_dim]
-#         pruned_output = output.clone()
-#         pruned_output[..., candidate_neurons] = 0  # Zero out the specified neurons
-#         return pruned_output
-#     return expert_routing_hook
-
-# def register_expert_routing_hooks(model, prioritized_experts, target_layer):
-#     hook_handles = []
-
-#     for layer_name, module in model.named_modules():
-#         if layer_name.lower().endswith(".mlp.gate"):
-#             hook_fn = get_expert_routing_hook(layer_name, prioritized_experts)
-#             handle = module.register_forward_hook(hook_fn)
-#             hook_handles.append(handle)
-    
-#     return hook_handles
-
 def get_prune_hook(layer_name, sorted_experts):
     def prune_hook(module, input, output):
         # output shape: [tokens, num_experts]
         # print(f"Pruning logits of experts in: '{layer_name}'")
         for expert in sorted_experts:
             pruned_output = output.clone()
-            pruned_output[...,expert] = torch.min(pruned_output, dim=1).values
+            pruned_output[...,expert] = 1e-9
         return pruned_output
     return prune_hook
 

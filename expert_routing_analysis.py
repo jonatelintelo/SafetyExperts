@@ -13,9 +13,6 @@ from collections import defaultdict, Counter
 from argument_parser import parse_arguments
 
 
-def run_pruning():
-    return None
-
 def create_dir(dir):
     pathlib.Path(dir).mkdir(parents=True, exist_ok=True)
 
