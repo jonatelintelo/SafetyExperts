@@ -47,6 +47,7 @@ if __name__ == "__main__":
     device = 'auto'
     
     models = [
+        "Qwen/Qwen3-30B-A3B-Instruct-2507", #0
         "meta-llama/Llama-3.2-1B-Instruct", #0
         "meta-llama/Llama-3.2-3B-Instruct", #1
         "Qwen/Qwen2.5-7B-Instruct", #2

@@ -3,8 +3,6 @@ import numpy as np
 from tqdm import tqdm
 from scipy.stats import zscore
 from qwen_vl_utils import process_vision_info
-import argparse
-from collections import defaultdict
 
 import util
 import util_model
@@ -42,60 +40,10 @@ def register_pruning_hooks(model, candidate_dict, target_layer):
 
 def activation_hook(layer_name):
     def hook(module, input, output):
-        if layer_name.endswith('mlp.gate'):
-            # Clear previous data
-            topk_expert_indices.clear()
-            nr_tokens.clear()
-
-            # Total number of tokens
-            total_tokens = input[0].shape[0]
-            nr_tokens.append(total_tokens)
-
-            # Get top-k expert indices for each token
-            tk_expert_indices = torch.topk(output, k=8, dim=-1).indices  # (nr_tokens, topk_experts)
-            token_indices = torch.arange(total_tokens).unsqueeze(1).expand_as(tk_expert_indices)
-
-            # Flatten and move to CPU once
-            flat_experts = tk_expert_indices.flatten().cpu()
-            flat_tokens = token_indices.flatten().cpu()
-
-            # Populate topk_expert_indices dictionary
-            for expert, token in zip(flat_experts.tolist(), flat_tokens.tolist()):
-                topk_expert_indices[expert].append(token)
-        else:
-            expert_index = int(layer_name.split('.')[-2])
-            token_indices = topk_expert_indices.get(expert_index, [])
-
-            if not token_indices:
-                return  # Skip if no tokens routed to this expert
-
-            # Compute prompt indices
-            seq_len = nr_tokens[0] // 32
-            token_indices_tensor = torch.tensor(token_indices)
-            prompt_indices = token_indices_tensor.div(seq_len, rounding_mode='floor')
-
-            # Move output to CPU once
-            output_cpu = output.detach().cpu().float()
-
-            # Collect activations per prompt index
-            act = defaultdict(list)
-            for i, prompt_index in enumerate(prompt_indices):
-                act[prompt_index.item()].append(output_cpu[i])
-
-            activations_intermediate[layer_name].append(act)
-
-            # # Collect activations per prompt index
-            # act = defaultdict(list)
-            # for i, prompt_index in enumerate(prompt_indices):
-            #     act[prompt_index.item()].append(output_cpu[i])
-            # prompt_value_list = []
-            # for prompt_index in act:  # Loop over every prompt captured in the batch
-            #     prompt_value_list.append(np.mean(np.array(act[prompt_index]), axis=0, keepdims=True))
-            # print(np.array(prompt_value_list).shape)
-            # activations.setdefault(layer_name, []).append(prompt_value_list)
-
+        # output: tensor of shape (batch, seq_length, hidden_size)
+        act = output.max(dim=1)[0].detach().cpu().float().numpy() # shape: (batch, prompt_len, hidden_size)
+        activations.setdefault(layer_name, []).append(act)
     return hook
-
 
 def register_activation_hooks(model, target_layers):
     hook_handles = []
@@ -109,42 +57,40 @@ def register_activation_hooks(model, target_layers):
 
 def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="default"):
     total_batches = (len(prompts) + batch_size - 1) // batch_size
-    start = 0
     for batch_prompts in tqdm(util.batchify(prompts, batch_size), total=total_batches):
         # Tokenize the batch
-        # input_tokens.size = (batch_size, seq_len)
-        input_tokens = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
+        if model_name.startswith('gemma-3'):
+            input_tokens = tokenizer.apply_chat_template(
+                batch_prompts, add_generation_prompt=True, tokenize=True,
+                return_dict=True, return_tensors="pt", padding=True
+            ).to(model.device)
+        elif model_name.startswith("Qwen2.5-VL"):
+            text = tokenizer.apply_chat_template(
+                batch_prompts, tokenize=False, add_generation_prompt=True
+            )
+            image_inputs, _ = process_vision_info(batch_prompts)
+            input_tokens = tokenizer(
+                text=text,
+                images=image_inputs,
+                # videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            ).to(model.device)
+        else: 
+            input_tokens = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
+
         for _ in range(num_responses):
             with torch.no_grad():
                 _ = model(**input_tokens)
-        start += 1
-        if start == 10:
-            break
+        
     # Concatenate activations for each layer (now shape: [num_prompts, hidden_size])
-    for layer_name in activations_intermediate:  # Loop over every expert layer
-        activations[layer_name] = np.array([])
-        # print(np.array(activations_intermediate[layer_name]).shape)
-        prompt_value_list = []
-        for prompt_indices_dict in activations_intermediate[layer_name]:  # Loop over batches, 1 dict per batch
-            for prompt_index in prompt_indices_dict:  # Loop over every prompt captured in the batch
-                prompt_value_list.append(np.mean(np.array(prompt_indices_dict[prompt_index]), axis=0, keepdims=True))
-        activations[layer_name] = np.concatenate(prompt_value_list, axis=0)
+    for layer_name in activations:
+        activations[layer_name] = np.concatenate(activations[layer_name], axis=0)
         print(f"Layer {layer_name}: activations shape: {activations[layer_name].shape}")
 
-    # for layer_name in activations:  # Loop over every expert layer
-    #     activations[layer_name] = np.concatenate(activations[layer_name], axis=0)
-    #     print(f"Layer {layer_name}: activations shape: {activations[layer_name].shape}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--model_id", default=0, type=int)
-    parser.add_argument("--perform_safety_prob", action="store_true")
-    arguments = parser.parse_args()
-
-    model_id = arguments.model_id
-    perform_safety_prob = arguments.perform_safety_prob
+if __name__ == "__main__":    
+    # Select the model that you want to test
+    model_id = 0
 
     # Config for safety neuron extraction
     num_responses = 1
@@ -153,6 +99,7 @@ if __name__ == "__main__":
     
     # Set them to False to load pre computed safety neurons
     compute_neuron_activation = True
+    perform_safety_prob = True
     
     # auto: use all gpu
     # cpu: use cpu only
@@ -162,8 +109,20 @@ if __name__ == "__main__":
     max_new_tokens = 128
 
     models = [
-        "Qwen/Qwen3-30B-A3B-Instruct-2507",
-        "Qwen/Qwen2.5-7B-Instruct",
+        "google/gemma-3-1b-it",
+        "meta-llama/Llama-3.2-1B-Instruct", #0
+        "meta-llama/Llama-3.2-3B-Instruct", #1
+        "Qwen/Qwen2.5-7B-Instruct", #2
+        "Qwen/Qwen2.5-14B-Instruct", #3
+        "microsoft/Phi-4-mini-instruct", #4
+        "microsoft/phi-4", #5
+        "google/gemma-2b-it", #6
+        "google/gemma-7b-it", #7
+        "google/gemma-3-12b-it",#8
+        "google/gemma-3-27b-it",#9
+        "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",#10
+        "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", #11
+        "Qwen/QwQ-32B", #12
     ]
 
     model_name = models[model_id].split('/')[-1]
@@ -174,32 +133,20 @@ if __name__ == "__main__":
     num_mlp = util_model.count_mlp_module(model, model_name)
     print("Number of transformer blocks (and typically MLP layers):", num_mlp)
     
-    print("load datasets and expand data")
     if compute_neuron_activation or perform_safety_prob:
         questions, labels = util.load_datasets()
         questions, labels = util.expand_data(questions, labels, num_responses=num_responses)
     
-    print("compute neuron activation")
-    util.create_dir(f'../pre_computed_act')
-
     if compute_neuron_activation:
         prompts = util_model.construct_prompt(tokenizer, model_name, questions)
         # We hook into modules whose names contain "mlp" as a proxy for the Gate/Up layers.
-        activations_intermediate = defaultdict(list)  # Dictionary: {layer_name: [activation_array for each prompt]}
-        topk_expert_indices = defaultdict(list)
-        activations = {}
-        nr_tokens = []
+        activations = {}  # Dictionary: {layer_name: [activation_array for each prompt]}
         hook_handles = register_activation_hooks(model, ["gate", "up"])
         get_activation(model, prompts, batch_size=32, model_name=model_name)
         # Remove hooks to clean up
         for handle in hook_handles:
             handle.remove()
-        util.save_dict(activations, f"../pre_computed_act/activations_{model_name}.p")
-    else:
-        activations = util.load_dict(f"../pre_computed_act/activations_{model_name}.p")
-
     
-    print("compute safety neurons")
     # Compute safety neurons
     util.create_dir(f'../pre_computed_sn')
     safety_neurons = {}

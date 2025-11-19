@@ -1,10 +1,10 @@
-
 from trl import GRPOConfig, GRPOTrainer, ModelConfig, get_peft_config
 from datasets import load_dataset
-
 import util_model
-from activation_extractor import NeuronActivationExtractor
 import util
+
+
+BASE_FOLDER = "/home/jtelintelo/SafetyExperts/results/"
 
 def construct_grpo_prompt(question):
     return {
@@ -60,7 +60,7 @@ def reward_len(completions, **kwargs):
     return score
 
 if __name__ == "__main__":
-    generator_dir = f"./_generator_checkpoint/sft_gemma-3-1b-it" # does not included for the AE as the model size is too large
+    generator_dir = BASE_FOLDER + f"generator_checkpoint/sft_gemma-3-1b-it" # does not included for the AE as the model size is too large
     neuron_weight_dir = "../pre_computed_sn"
     enable_judge_model = True
     enable_neuron_scorer = True
@@ -80,7 +80,6 @@ if __name__ == "__main__":
     use_peft = True
     model_list = [
         "google/gemma-3-1b-it", #0
-        "Qwen/Qwen2.5-32B-Instruct", #1
     ]
     
     # Load questions
@@ -99,14 +98,6 @@ if __name__ == "__main__":
     if enable_judge_model:
         judge_model_id = "meta-llama/Llama-Guard-3-8B"
         judge_model, judge_tokenizer = util_model.load_model(judge_model_id, device=device, mode='eval')
-
-    # Init extractor
-    print("Init the NeuronActivationExtractor...")
-    extractor = NeuronActivationExtractor(
-        tgt_model, tgt_tokenizer, tgt_model_name,
-        safe_neuron_threshold=3, scorer_dir=f"./_scorer/scorer_{tgt_model_name}.pt",
-        get_activation=enable_neuron_scorer
-    )
 
     # Load generator
     print("Load the (SFT) generator...")

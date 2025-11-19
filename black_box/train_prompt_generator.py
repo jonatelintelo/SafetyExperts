@@ -3,6 +3,8 @@ from trl import SFTTrainer
 from datasets import load_dataset, concatenate_datasets
 import torch
 
+BASE_FOLDER = "/home/jtelintelo/SafetyExperts/results/"
+
 def apply_chat_template(question, response):
     system_prompt = "You are an AI that provides direct and precise answers. Respond only to the question without additional details or explanations."
     chat = [
@@ -53,7 +55,7 @@ if __name__ == "__main__":
         device_map="auto",
         attn_implementation='eager',
     )
-    checkpoint_path = f"./_generator_checkpoint/pruned_checkpoint_{model_name}.pt"
+    checkpoint_path = BASE_FOLDER + f"generator_checkpoint/pruned_checkpoint_{model_name}.pt"
     # Load the state dict and update the model.
     state_dict = torch.load(checkpoint_path, map_location=model.device)
     model.load_state_dict(state_dict)
@@ -61,7 +63,7 @@ if __name__ == "__main__":
     train_dataset, eval_dataset = load_data()
 
     training_args = TrainingArguments(
-        output_dir="./results",
+        output_dir=BASE_FOLDER + "train_prompt_generator_results",
         num_train_epochs=5,  # More epochs for better convergence with 80K samples
         per_device_train_batch_size=16,  # Higher batch size (adjust based on VRAM)
         gradient_accumulation_steps=1,  # Minimize accumulation since you have memory
@@ -104,5 +106,5 @@ if __name__ == "__main__":
     trainer.model.config.use_cache = False
     # Start Fine-Tuning
     trainer.train()
-    trainer.model.save_pretrained(f'./_generator_checkpoint/sft_{model_name}')
-    tokenizer.save_pretrained(f'./_generator_checkpoint/sft_{model_name}')
+    trainer.model.save_pretrained(BASE_FOLDER + f'generator_checkpoint/sft_{model_name}')
+    tokenizer.save_pretrained(BASE_FOLDER + f'generator_checkpoint/sft_{model_name}')

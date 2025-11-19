@@ -8,6 +8,9 @@ import util
 import util_model
 import probe
 
+import os
+os.environ["HF_HOME"] = f"/scratch-shared/{os.environ['USER']}/hf-cache-dir" 
+
 def prune_hook(candidate_neurons):
     def prune_hook(module, input, output):
         # output shape: [batch, seq_length, hidden_dim]
@@ -41,7 +44,13 @@ def register_pruning_hooks(model, candidate_dict, target_layer):
 def activation_hook(layer_name):
     def hook(module, input, output):
         # output: tensor of shape (batch, seq_length, hidden_size)
-        act = output.max(dim=1)[0].detach().cpu().float().numpy() # shape: (batch, prompt_len, hidden_size)
+        # print(layer_name)w
+        # print(output[0].shape)
+        # act = output[0].max(dim=1)[0].detach().cpu().float().numpy() # shape: (batch, prompt_len, hidden_size)
+        act = output[0].mean(dim=1).detach().cpu().float().numpy() # shape: (batch, prompt_len, hidden_size)
+
+        # print(act)
+        # print(act.shape)
         activations.setdefault(layer_name, []).append(act)
     return hook
 
@@ -49,7 +58,8 @@ def register_activation_hooks(model, target_layers):
     hook_handles = []
     # Register hooks on all submodules whose name contains "mlp"
     for name, module in model.named_modules():
-        if any(keyword in name.lower() for keyword in target_layers):
+        # if any(keyword in name.lower() for keyword in target_layers):
+        if name.lower().endswith("self_attn"):
             # print(f"Registering hook on: {name}")
             handle = module.register_forward_hook(activation_hook(name))
             hook_handles.append(handle)
@@ -89,7 +99,7 @@ def get_activation(model, prompts, batch_size=8, num_responses=1, model_name="de
 
 if __name__ == "__main__":    
     # Select the model that you want to test
-    model_id = 1
+    model_id = 0
 
     # Config for safety neuron extraction
     num_responses = 1

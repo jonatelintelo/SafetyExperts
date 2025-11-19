@@ -21,6 +21,8 @@ class NeuronActivationExtractor:
         if scorer_dir is not None:
             torch.jit.load(scorer_dir, map_location=self.model.device).to(self.model.device).eval()
         self.get_activation = get_activation
+
+        self.ensemble_model = torch.jit.load(f'./_scorer/scorer_{model_name}.pt').to(model.device).eval()
         
         # Compute candidate (safety) neurons from pre-saved weights.
         self.candidate_dict = self.get_safety_neurons()

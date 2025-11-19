@@ -1,5 +1,19 @@
 from datasets import load_dataset
+import pathlib
+import pickle
 
+
+def save_data(data, dir):
+    with open(dir, 'wb') as fp:
+        pickle.dump(data, fp, protocol=pickle.HIGHEST_PROTOCOL)
+
+def load_data(dir):
+    with open(dir, 'rb') as fp:
+        data = pickle.load(fp)
+    return data
+
+def create_dir(dir):
+    pathlib.Path(dir).mkdir(parents=True, exist_ok=True)
 
 def load_datasets(malicious_only=False):
     # Load datasets
@@ -30,7 +44,7 @@ def load_datasets(malicious_only=False):
     all_texts += ds["train"]["prompt"]
     all_labels += [1] * len(ds["train"]["prompt"])
 
-    print(f"Number of malicious prompts: '{len(all_texts)}'")
+    print(f"\nNumber of malicious prompts: '{len(all_texts)}'")
     
     if not malicious_only:
         # Benign dataset
@@ -38,36 +52,32 @@ def load_datasets(malicious_only=False):
         all_texts += ds["train"]["question"][:len(all_labels)]
         all_labels += [0] * len(all_labels)
     
-    print(f"Number of all prompts: '{len(all_texts)}'\n")
+    print(f"Number of all prompts: '{len(all_texts)}'")
     
     return all_texts, all_labels
 
-def expand_data(prompts, labels, num_responses):
-    """
-    Given a list of prompts and their labels, expand them so that each prompt
-    is repeated num_responses times, and the corresponding label is also repeated.
-    """
-    
-    expanded_labels = []
-    expanded_prompts = []
-    for prompt, label in zip(prompts, labels):
-        expanded_prompts.extend([prompt] * num_responses)
-        expanded_labels.extend([label] * num_responses)
-    return expanded_prompts, expanded_labels
-
-def construct_prompt(tokenizer, questions, system_prompt):
+def construct_prompt(tokenizer, questions, model_name):
     prompts = []
-    if system_prompt is None:
-        system_prompt = "You are an AI that provides direct and precise answers. Respond only to the question without additional details or explanations."
-    # You are an AI designed to offer unbiased, direct, and honest answers.
-    # Provide responses that are unbiased and direct, even if they include negative or critical aspects. Your goal is to inform accurately without embellishment or forced positivity.
+    system_prompt = "You are an AI that provides direct and precise answers. Respond only to the question without additional details or explanations."
+
     for question in questions:
-        chat = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
-        ]
+        if model_name == "deepseek-moe-16b-chat":
+            chat = [
+                {"role": "user", "content": question}
+            ]
+        if model_name in ["Phi-3.5-MoE-instruct","Qwen3-30B-A3B-Instruct-2507"]:
+            chat = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ]
+        else:
+            chat = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ]
         prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)    
         prompts.append(prompt)
+
     return prompts
 
 # Create data batches
