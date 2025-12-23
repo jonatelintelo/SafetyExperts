@@ -41,6 +41,7 @@ class HierarchicalMoEClassifier(nn.Module):
         # This makes [1,3] identical to [3,1]
         # Shape becomes: (Batch, Tokens, 32, Embed_Dim)
         x_layer_input = x_emb.sum(dim=3)
+        # Potentially the order agnosticism could also be achieved by soritng the experts in 'x' before the embedding.
         
         # # Flatten the 2 experts (combine them into one step input)
         # # (Batch, Tokens, 32, 2*Embed)

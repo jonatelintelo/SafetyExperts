@@ -7,9 +7,8 @@ import torch.optim as optim
 import lstm_model
 import lstm_data
 from torch.utils.data import random_split
-import find_safety_expert
+import find_safety_experts
 import model_utils
-import classify_new_prompts
 
 
 SEED = 42
@@ -128,27 +127,6 @@ def train(traces, labels, num_total_experts):
     print("\n✅ Training complete.")
     return model
 
-def print_risk_trajectory(tokenizer, prompt, probs_sequence):
-    """
-    Aligns tokens with probability scores and prints them as (Score, Token) tuples.
-    """
-    # 1. Tokenize (Ensure special tokens match your MoE trace collection)
-    token_ids = tokenizer.encode(prompt, add_special_tokens=True)
-    tokens = [tokenizer.decode([tid]) for tid in token_ids]
-
-    for i, (_, prob) in enumerate(zip(tokens, probs_sequence)):
-        current_highest_prob = 0
-        if prob > current_highest_prob:
-            result = i
-    return result
-        
-def trigger_token_analysis(tokenizer, prompt, probs_sequence):
-    token_ids = tokenizer.encode(prompt, add_special_tokens=True)
-    tokens = [tokenizer.decode([tid]) for tid in token_ids]
-
-    for i, (token, prob) in enumerate(zip(tokens, probs_sequence)):
-        print(f"{i:<6} | ({prob:.4f}, '{token}')")
-
 if __name__ == "__main__":
     model_id = 1
 
@@ -191,30 +169,59 @@ if __name__ == "__main__":
 
     # for prompt_index in [0,1,2,3,4,250,251,252,253,254]:
     #     print(f"questions[prompt_index]: {questions[prompt_index]}")
-    #     risk_scores = classify_new_prompts.analyze_risk_trajectory(trained_lstm_model, traces, prompt_idx=prompt_index)
-    #     trigger_token_analysis(tokenizer, questions[prompt_index], risk_scores)
-    # dd
+    #     risk_scores = find_safety_experts.analyze_risk_trajectory(trained_lstm_model, traces, prompt_idx=prompt_index)
+    #     find_safety_experts.trigger_token_analysis(tokenizer, questions[prompt_index], risk_scores)
 
-############################################################
-############################################################
+#################################################################################################
+# Prune the experts that process the token with highest probability in maliciousness trajectory #
+#################################################################################################
 
     for prompt_index in range(50):
-        print(f"Questions: {questions[prompt_index]}")
+        print(f"Question: {questions[prompt_index]}")
         responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
         print(f"Response before pruning: {responses}")
-        risk_scores = classify_new_prompts.analyze_risk_trajectory(trained_lstm_model, traces, prompt_idx=prompt_index)
-        result = print_risk_trajectory(tokenizer, questions[prompt_index], risk_scores)
-        experts = traces[prompt_index][result]
-        print(f"Experts to prune: {experts}")
+        risk_scores = find_safety_experts.analyze_risk_trajectory(trained_lstm_model, traces, prompt_idx=prompt_index)
+        result = find_safety_experts.print_risk_trajectory(tokenizer, questions[prompt_index], risk_scores)
+        refusal_experts = traces[prompt_index][result]
+        print(f"Experts to prune: {refusal_experts}")
         dd
-        pruning_handles = model_utils.register_pruning_hooks(model, experts, model_config.gate_name)
+        pruning_handles = model_utils.register_pruning_hooks(model, refusal_experts, model_config.gate_name)
         responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
         print(f"Response after pruning: {responses}\n")
 
         for handle in pruning_handles:
                 handle.remove()
 
-    dd
+##############################################################################################
+# Prune the global experts that are most important for classification with gradient approach #
+##############################################################################################
+
+    full_dataset = lstm_data.MoETraceDataset(traces, labels)
+    full_loader = lstm_data.get_dataLoader(full_dataset, batch_size=1, shuffle=False)
+    
+    for prompt_index, (x_batch, y_batch, lengths) in enumerate(full_loader):
+        responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
+        print(f"Question: {questions[prompt_index]}")
+        print(f"Response before pruning: {responses}")
+
+        importance_map, expert_ids = find_safety_experts.get_expert_importance(trained_lstm_model, x_batch, lengths)
+        rankings = find_safety_experts.find_top_refusal_experts(importance_map, expert_ids)
+
+        for i in range(1, len(rankings)+1):
+            candidates = [item[0] for item in rankings[:i]] # layer, eid
+            candidates = sorted(candidates, key=lambda x: x[0])
+            candidates = [(f"{str(item[0])}."+model_config.gate_name, item[1]) for item in candidates]
+            
+            pruning_handles = model_utils.register_pruning_hooks_candidates(model_config.model_name, model, candidates)
+
+            responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
+            print(f"Response after pruning index '{i}': {responses}")
+
+            for handle in pruning_handles:
+                handle.remove()
+
+#################################################################################################
+#################################################################################################
 
     # # 3. Perform the Split
     # total_size = len(full_dataset)
@@ -229,8 +236,8 @@ if __name__ == "__main__":
     # val_loader = lstm_data.get_dataLoader(val_dataset, batch_size=1, shuffle=False)
 
     # for x_batch, y_batch, lengths in val_loader:
-    #     importance_map, expert_ids = find_safety_expert.get_expert_importance(model, x_batch, lengths)
-    #     results = find_safety_expert.find_top_expert_per_layer(importance_map, expert_ids)
+    #     importance_map, expert_ids = find_safety_experts.get_expert_importance(model, x_batch, lengths)
+    #     results = find_safety_experts.find_top_expert_per_layer(importance_map, expert_ids)
 
     #     break
 
@@ -241,21 +248,16 @@ if __name__ == "__main__":
 
     # questions, labels = data_utils.load_datasets(malicious_only=False) # label: 1 = unsafe
 
-
-
-
-
-
 ############################################################
 ############################################################
 
     # full_loader = lstm_data.get_dataLoader(full_dataset, batch_size=1, shuffle=False)
 
     # for prompt_index, (x_batch, y_batch, lengths) in enumerate(full_loader):
-        # importance_map, expert_ids = find_safety_expert.get_expert_importance(trained_lstm_model, x_batch, lengths)
+        # importance_map, expert_ids = find_safety_experts.get_expert_importance(trained_lstm_model, x_batch, lengths)
 
         # for i in range(16):
-        #     rankings = find_safety_expert.find_global_top_expert(importance_map, expert_ids)
+        #     rankings = find_safety_experts.find_global_top_expert(importance_map, expert_ids)
         #     refusal_drivers = sorted(
         #         [item for item in rankings if item[1] > 0], 
         #         key=lambda x: x[1], 
@@ -274,30 +276,7 @@ if __name__ == "__main__":
 ############################################################
 ############################################################
 
-    full_dataset = lstm_data.MoETraceDataset(traces, labels)
-    full_loader = lstm_data.get_dataLoader(full_dataset, batch_size=1, shuffle=False)
-    
-    for prompt_index, (x_batch, y_batch, lengths) in enumerate(full_loader):
-        responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
-        print(f"questions[prompt_index]: {questions[prompt_index]}")
-        print(f"Response before pruning: {responses}")
 
-        importance_map, expert_ids = find_safety_expert.get_expert_importance(trained_lstm_model, x_batch, lengths)
-
-        rankings = find_safety_expert.find_top_refusal_experts(importance_map, expert_ids)
-
-        for i in range(3000,4000):
-            candidates = [item[0] for item in rankings[:i]] # layer, eid
-            candidates = sorted(candidates, key=lambda x: x[0])
-            candidates = [(f"{str(item[0])}."+model_config.gate_name, item[1]) for item in candidates]
-            
-            pruning_handles = model_utils.register_pruning_hooks_candidates(model_config.model_name, model, candidates)
-
-            responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
-            print(f"Response after pruning index '{i}': {responses}")
-
-            for handle in pruning_handles:
-                handle.remove()
 
     # print("Top Experts Contributing to Refusal:")
     # for (layer, eid), score in rankings[:5]:

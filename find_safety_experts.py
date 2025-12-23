@@ -1,5 +1,71 @@
 import torch
 
+def print_risk_trajectory(tokenizer, prompt, probs_sequence):
+    """
+    Aligns tokens with probability scores and prints them as (Score, Token) tuples.
+    """
+    # 1. Tokenize (Ensure special tokens match your MoE trace collection)
+    token_ids = tokenizer.encode(prompt, add_special_tokens=True)
+    tokens = [tokenizer.decode([tid]) for tid in token_ids]
+
+    for i, (_, prob) in enumerate(zip(tokens, probs_sequence)):
+        current_highest_prob = 0
+        if prob > current_highest_prob:
+            result = i
+    return result
+        
+def trigger_token_analysis(tokenizer, prompt, probs_sequence):
+    token_ids = tokenizer.encode(prompt, add_special_tokens=True)
+    tokens = [tokenizer.decode([tid]) for tid in token_ids]
+
+    for i, (token, prob) in enumerate(zip(tokens, probs_sequence)):
+        print(f"{i:<6} | ({prob:.4f}, '{token}')")
+
+def analyze_risk_trajectory(model, trace_dict, prompt_idx):
+    """
+    Feeds a single prompt's traces into the model and plots the maliciousness 
+    score at every token step.
+    """
+    model.eval() # Set to evaluation mode
+    
+    # 1. Prepare Single Input
+    # Extract the list of layer-traces for this specific prompt
+    token_indices = sorted(trace_dict[prompt_idx].keys())
+    # print(f"token_indices: {token_indices}")
+    single_prompt_data = [trace_dict[prompt_idx][t] for t in token_indices]
+    # print(f"single_prompt_data: {single_prompt_data}")
+    
+    # Convert to Tensor & Add Batch Dimension -> (1, Num_Tokens, Num_Layers, Top_K)
+    x_tensor = torch.tensor(single_prompt_data, dtype=torch.long).unsqueeze(0)
+    
+    # Get actual length
+    length = [len(single_prompt_data)]
+
+    with torch.no_grad():
+        # --- REPLICATING FORWARD PASS MANUALLY TO GET INTERMEDIATE STEPS ---
+        
+        # 1. Embed & Flatten
+        x_emb = model.expert_embedding(x_tensor) 
+        # (1, Seq_Len, Input_Size)
+        x_flat = x_emb.view(1, length[0], -1) 
+        
+        # 2. Run LSTM
+        # We DO NOT use pack_padded_sequence here because batch_size is 1 (no padding needed)
+        # output shape: (1, Seq_Len, Hidden_Dim)
+        # This 'output' contains the hidden state for *every* token
+        lstm_output, _ = model.lstm(x_flat)
+        
+        # 3. Classify EVERY step
+        # We apply the Linear layer to the entire sequence
+        # Shape: (1, Seq_Len, 1)
+        logits_sequence = model.classifier(lstm_output)
+        
+        # 4. Convert to Probabilities
+        probs_sequence = torch.sigmoid(logits_sequence).squeeze().tolist()
+    
+    return probs_sequence
+
+
 def find_global_top_expert(importance_map, expert_ids):
     """
     importance_map: (Tokens, Layers, Top_K) - Scalar gradients

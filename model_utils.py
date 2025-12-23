@@ -181,6 +181,10 @@ def register_pruning_hooks_on_experts(model, experts, gate_name):
     return hook_handles
 
 
+#################################################################
+# Old pruning code for naive approach with activation frequency #
+#################################################################
+
 # def register_progressive_strategy_hooks(model_name, model, k, n, number_of_layers, p):
 #     hook_handles = []
 #     top_k_expert_indices = defaultdict(list)
