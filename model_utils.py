@@ -84,6 +84,18 @@ def extract_text_after_think(response: str) -> str:
     else:
         return response  # No </think> tag, return entire response
 
+def register_activation_hooks(model_name, model, k, gate_name):
+    hook_handles = []
+    top_k_expert_indices = defaultdict(list)
+
+    for layer_name, module in model.named_modules():
+        if layer_name.lower().endswith(gate_name):
+            hook_fn = get_activation_hook(model_name, layer_name, top_k_expert_indices, k)
+            handle = module.register_forward_hook(hook_fn)
+            hook_handles.append(handle)
+
+    return hook_handles, top_k_expert_indices
+
 def get_activation_hook(model_name, layer_name, top_k_expert_indices, k):
     print(f"Activation hook on layer: '{layer_name}'")
 
@@ -99,47 +111,27 @@ def get_activation_hook(model_name, layer_name, top_k_expert_indices, k):
             print(output.shape)
             print("---------------------------------------------------------------")
             raise ValueError(f"Activation hook for {model_name} is not implemented.")
+        
     return activation_hook
 
-def register_activation_hooks(model_name, model, k, gate_name):
+def register_pruning_hooks_token(model, refusal_drivers, gate_name):
     hook_handles = []
-    top_k_expert_indices = defaultdict(list)
 
     for layer_name, module in model.named_modules():
         if layer_name.lower().endswith(gate_name):
-            hook_fn = get_activation_hook(model_name, layer_name, top_k_expert_indices, k)
+            layer_index = int(layer_name.split('.')[2])
+            hook_fn = get_pruning_hook_token(layer_name, refusal_drivers[layer_index])
             handle = module.register_forward_hook(hook_fn)
             hook_handles.append(handle)
 
-    return hook_handles, top_k_expert_indices
+    return hook_handles
 
-def get_pruning_hook(layer_name, refusal_drivers):
+def get_pruning_hook_token(layer_name, refusal_drivers):
     # print(f"Pruning hook on layer: '{layer_name}'")
+
     def prune_hook(module, input, output):
         pruned_output = output.clone()
         pruned_output[...,refusal_drivers] = float("-inf")
-        return pruned_output
-
-    return prune_hook
-
-def get_pruning_hook_on_experts(layer_name, experts):
-    # print(f"Pruning hook on layer: '{layer_name}'")
-    def prune_hook(module, input, output):
-        pruned_output = output.clone()
-        pruned_output[...,experts] = float("-inf")
-        return pruned_output
-
-    return prune_hook
-
-def get_pruning_hook_candidates(layer_name, expert_index):
-    # print(f"Pruning hook on layer: '{layer_name}' and expert '{expert_index}'")
-
-    def prune_hook(module, input, output):
-        pruned_output = output.clone()
-        # print(f"output.shape: {output.shape}")
-        # before = torch.topk(pruned_output, k=2, dim=-1, sorted=False).indices
-        pruned_output[...,expert_index] = float("-inf")
-        # print(before == torch.topk(pruned_output, k=2, dim=-1, sorted=False).indices)
         return pruned_output
 
     return prune_hook
@@ -150,24 +142,22 @@ def register_pruning_hooks_candidates(model_name, model, candidates):
     for candidate in candidates:
         for layer_name, module in model.named_modules():
             if layer_name.lower().endswith(candidate[0]):
-                hook_fn = get_pruning_hook(layer_name, candidate[1])
+                hook_fn = get_pruning_hook_candidates(layer_name, candidate[1])
                 handle = module.register_forward_hook(hook_fn)
                 hook_handles.append(handle)
-                break
+                break # break because we only need to register on this layer once
 
     return hook_handles
 
-def register_pruning_hooks(model, refusal_drivers, gate_name):
-    hook_handles = []
+def get_pruning_hook_candidates(layer_name, expert_index):
+    # print(f"Pruning hook on layer: '{layer_name}' and expert '{expert_index}'")
 
-    for layer_name, module in model.named_modules():
-        if layer_name.lower().endswith(gate_name):
-            layer_index = int(layer_name.split('.')[2])
-            hook_fn = get_pruning_hook(layer_name, refusal_drivers[layer_index])
-            handle = module.register_forward_hook(hook_fn)
-            hook_handles.append(handle)
+    def prune_hook(module, input, output):
+        pruned_output = output.clone()
+        pruned_output[...,expert_index] = float("-inf")
+        return pruned_output
 
-    return hook_handles
+    return prune_hook
 
 def register_pruning_hooks_on_experts(model, experts, gate_name):
     hook_handles = []
@@ -180,6 +170,14 @@ def register_pruning_hooks_on_experts(model, experts, gate_name):
 
     return hook_handles
 
+def get_pruning_hook_on_experts(layer_name, experts):
+    # print(f"Pruning hook on layer: '{layer_name}'")
+    def prune_hook(module, input, output):
+        pruned_output = output.clone()
+        pruned_output[...,experts] = float("-inf")
+        return pruned_output
+
+    return prune_hook
 
 #################################################################
 # Old pruning code for naive approach with activation frequency #
