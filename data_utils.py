@@ -2,6 +2,9 @@ from datasets import load_dataset
 import pathlib
 import pickle
 import numpy as np
+import model_utils
+import torch
+
 
 def save_data(data, dir):
     with open(dir, 'wb') as fp:
@@ -16,12 +19,10 @@ def create_directory(dir):
     pathlib.Path(dir).mkdir(parents=True, exist_ok=True)
 
 def load_twinset():
-    with open('/home/jtelintelo/SafetyExperts/slurm/scripts/twin_malicious.txt', 'r', encoding='utf-8') as file:
-        # This removes the \n and skips empty lines
+    with open('/home/jtelintelo/SafetyExperts/twin_malicious.txt', 'r', encoding='utf-8') as file:
         malicious_questions = [line.strip() for line in file if line.strip()]
 
-    with open('/home/jtelintelo/SafetyExperts/slurm/scripts/twin_benign.txt', 'r', encoding='utf-8') as file:
-        # This removes the \n and skips empty lines
+    with open('/home/jtelintelo/SafetyExperts/twin_benign.txt', 'r', encoding='utf-8') as file:
         benign_questions = [line.strip() for line in file if line.strip()]
 
     questions = malicious_questions + benign_questions
@@ -96,13 +97,20 @@ def construct_judge_prompt(tokenizer, questions, responses):
     for question, response in zip(questions, responses):
         if not response.strip():
             response = "Sorry, I cannot assist with that."
-        response = extract_text_after_think(response)
+        response = model_utils.extract_text_after_think(response)
         chat = [
             {"role": "user", "content": question},
             {"role": "assistant", "content": str(response).replace("[", "").replace("]", "")},
         ]
         prompts.append(chat)
     return prompts
+
+def moderate(model, tokenizer, prompt):
+    input_ids = tokenizer.apply_chat_template(prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        output = model.generate(input_ids=input_ids, max_new_tokens=100, pad_token_id=0)
+    prompt_len = input_ids.shape[-1]
+    return tokenizer.decode(output[0][prompt_len:], skip_special_tokens=True)
 
 # Create data batches
 def batchify(lst, batch_size):
