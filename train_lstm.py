@@ -7,7 +7,6 @@ import torch.optim as optim
 import lstm_model
 import lstm_data
 from torch.utils.data import random_split
-import classify_per_layer
 import find_safety_expert
 import model_utils
 import classify_new_prompts

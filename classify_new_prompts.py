@@ -78,38 +78,7 @@ def explain_specific_prompt(model, traces, prompt_idx):
         
         print(f"Token {token_idx} | Layer {layer_idx} | Expert {expert_id} | Importance: {score:.4f}")
 
-# --- USAGE ---
-# explain_specific_prompt(model, traces, prompt_idx=1)
 ############################################################################################
-
-# import matplotlib.pyplot as plt
-
-# def plot_expert_spectrum(df):
-#     """
-#     Plots the most malicious and most safe experts.
-#     """
-#     # Get top 5 safe and top 5 malicious
-#     top_malicious = df.head(5)
-#     top_safe = df.tail(5)
-    
-#     combined = pd.concat([top_malicious, top_safe])
-    
-#     plt.figure(figsize=(10, 6))
-    
-#     # Color coding
-#     colors = ['red' if x > 0.5 else 'green' for x in combined['Risk_Score']]
-    
-#     plt.bar(combined['Expert_ID'].astype(str), combined['Risk_Score'], color=colors)
-#     plt.axhline(0.5, color='gray', linestyle='--', linewidth=0.8)
-    
-#     plt.xlabel('Expert ID')
-#     plt.ylabel('Maliciousness Probability')
-#     plt.title('Expert Safety Spectrum\n(Green=Safety Experts, Red=Malicious Experts)')
-#     plt.show()
-
-# plot_expert_spectrum(df)
-
-# #############################################################################
 
 def analyze_risk_trajectory(model, trace_dict, prompt_idx):
     """
@@ -152,30 +121,5 @@ def analyze_risk_trajectory(model, trace_dict, prompt_idx):
         
         # 4. Convert to Probabilities
         probs_sequence = torch.sigmoid(logits_sequence).squeeze().tolist()
-
-    # # --- VISUALIZATION ---
-    # tokens = list(range(len(probs_sequence)))
-    
-    # plt.figure(figsize=(10, 5))
-    # plt.plot(tokens, probs_sequence, marker='o', linestyle='-', color='r')
-    
-    # # Add threshold line
-    # plt.axhline(y=0.5, color='gray', linestyle='--', label="Decision Threshold")
-    
-    # plt.title(f"Malicious Detection Trajectory (Prompt {prompt_idx})")
-    # plt.xlabel("Token Position")
-    # plt.ylabel("Probability of Maliciousness")
-    # plt.ylim(-0.1, 1.1)
-    # plt.grid(True, alpha=0.3)
-    
-    # # Highlight the exact moment it crosses the threshold
-    # for i, p in enumerate(probs_sequence):
-    #     if p > 0.5:
-    #         plt.axvline(x=i, color='red', linestyle=':', alpha=0.5)
-    #         plt.text(i, 0.55, f"Detection\nToken {i}", color='red')
-    #         break
-            
-    # plt.show()
     
     return probs_sequence
-
