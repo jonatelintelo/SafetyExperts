@@ -1,7 +1,7 @@
 from datasets import load_dataset
 import pathlib
 import pickle
-
+import numpy as np
 
 def save_data(data, dir):
     with open(dir, 'wb') as fp:
@@ -12,49 +12,60 @@ def load_data(dir):
         data = pickle.load(fp)
     return data
 
-def create_dir(dir):
+def create_directory(dir):
     pathlib.Path(dir).mkdir(parents=True, exist_ok=True)
 
-def load_datasets(malicious_only=False):
+def load_twinset():
+    with open('/home/jtelintelo/SafetyExperts/slurm/scripts/twin_malicious.txt', 'r', encoding='utf-8') as file:
+        # This removes the \n and skips empty lines
+        malicious_questions = [line.strip() for line in file if line.strip()]
+
+    with open('/home/jtelintelo/SafetyExperts/slurm/scripts/twin_benign.txt', 'r', encoding='utf-8') as file:
+        # This removes the \n and skips empty lines
+        benign_questions = [line.strip() for line in file if line.strip()]
+
+    questions = malicious_questions + benign_questions
+    labels = np.array([1]*len(malicious_questions) + [0]*len(benign_questions))
+
+    print(f'Number of benign prompts: {len(benign_questions)}')
+
+    print(f'Number of malicious prompts: {len(malicious_questions)}')
+
+    return questions, labels
+
+
+def load_datasets(malicious_only):
     # Load datasets
-    all_texts = []
-    all_labels = []
-    
-    # ds = load_dataset("walledai/MaliciousInstruct")
-    # all_texts += ds["train"]["prompt"]
-    # all_labels += [1] * len(ds["train"]["prompt"])
+    malicious_text = []
 
-    # ds = load_dataset("walledai/StrongREJECT")
-    # all_texts += ds["train"]["prompt"]
-    # all_labels += [1] * len(ds["train"]["prompt"])
-
-    # ds = load_dataset("walledai/TDC23-RedTeaming")
-    # all_texts += ds["train"]["prompt"]
-    # all_labels += [1] * len(ds["train"]["prompt"])
-    
     ds = load_dataset("walledai/CatHarmfulQA")
-    all_texts += ds["en"]["prompt"] #en/ch/ve
-    all_labels += [1] * len(ds["en"]["prompt"])
+    malicious_text += ds['en']['prompt']
     
     ds = load_dataset("declare-lab/HarmfulQA")
-    all_texts += ds["train"]["question"]
-    all_labels += [1] * len(ds["train"]["question"])
+    malicious_text += ds['train']['question']
 
     ds = load_dataset("LLM-LAT/harmful-dataset")
-    all_texts += ds["train"]["prompt"]
-    all_labels += [1] * len(ds["train"]["prompt"])
+    malicious_text += ds['train']['prompt']
+    
+    # # Load JailBreakV-28k dataset
+    # jailbreakv_28k_ds = load_dataset("JailbreakV-28K/JailBreakV-28k", 'JailBreakV_28K')["JailBreakV_28K"]
+    # jailbreakv_28k_ds = jailbreakv_28k_ds.filter(lambda ex: ex["format"] == "Template")
+    # malicious_text += jailbreakv_28k_ds['redteam_query']
 
-    print(f"\nNumber of malicious prompts: '{len(all_texts)}'")
-    
-    if not malicious_only:
-        # Benign dataset
-        ds = load_dataset("facebook/natural_reasoning")
-        all_texts += ds["train"]["question"][:len(all_labels)]
-        all_labels += [0] * len(all_labels)
-    
-    print(f"Number of all prompts: '{len(all_texts)}'")
-    
-    return all_texts, all_labels
+    if malicious_only:
+        all_text = malicious_text
+        all_labels = np.array([1]*len(malicious_text))
+    else:
+        ds = load_dataset("sentence-transformers/natural-questions")
+        benign_text = ds['train']['query'][:len(malicious_text)]
+        all_text = malicious_text + benign_text
+        all_labels = np.array([1]*len(malicious_text) + [0]*len(benign_text))
+        
+        print(f'Number of benign prompts: {len(benign_text)}')
+
+    print(f'Number of malicious prompts: {len(malicious_text)}')
+
+    return all_text, all_labels
 
 def construct_prompt(tokenizer, questions, model_name):
     prompts = []
@@ -65,7 +76,7 @@ def construct_prompt(tokenizer, questions, model_name):
             chat = [
                 {"role": "user", "content": question}
             ]
-        if model_name in ["Phi-3.5-MoE-instruct","Qwen3-30B-A3B-Instruct-2507"]:
+        if model_name in ["Phi-3.5-MoE-instruct","Qwen3-30B-A3B-Instruct-2507","Qwen1.5-MoE-A2.7B"]:
             chat = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": question},
@@ -78,6 +89,19 @@ def construct_prompt(tokenizer, questions, model_name):
         prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)    
         prompts.append(prompt)
 
+    return prompts
+
+def construct_judge_prompt(tokenizer, questions, responses):
+    prompts = []
+    for question, response in zip(questions, responses):
+        if not response.strip():
+            response = "Sorry, I cannot assist with that."
+        response = extract_text_after_think(response)
+        chat = [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": str(response).replace("[", "").replace("]", "")},
+        ]
+        prompts.append(chat)
     return prompts
 
 # Create data batches
