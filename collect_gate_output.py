@@ -31,7 +31,7 @@ if __name__ == "__main__":
     print(f"First GPU Name: {torch.cuda.get_device_name(0)}")
     print(f"Test tensor on GPU: {torch.rand(5).cuda().device}")
 
-    model_id = 0
+    model_id = 1
 
     models = [
         # LLMs

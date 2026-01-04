@@ -64,7 +64,7 @@ def get_token_traces(activations_dict):
     return traces
 
 if __name__ == "__main__":
-    model_id = 0
+    model_id = 1
 
     models = [
         # LLMs

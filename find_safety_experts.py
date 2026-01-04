@@ -114,7 +114,7 @@ def find_top_refusal_experts(importance_map, expert_ids):
     
     return sorted_experts
     
-def find_top_expert_per_layer(importance_map, expert_ids):
+def find_top_n_expert_in_every_layer(importance_map, expert_ids, n):
     """
     importance_map: (Tokens, Layers, Top_K) - Scalar gradients
     expert_ids: (Tokens, Layers, Top_K) - Original expert indices
@@ -137,13 +137,16 @@ def find_top_expert_per_layer(importance_map, expert_ids):
 
         # Find the expert with the max score in this layer
         if layer_expert_scores:
-            top_eid = max(layer_expert_scores, key=layer_expert_scores.get)
-            top_score = layer_expert_scores[top_eid]
-            top_experts_by_layer.append({
-                "layer": l,
-                "expert_id": top_eid,
-                "importance_score": top_score
-            })
+            # Sort experts by score (value) in descending order
+            sorted_experts = sorted(layer_expert_scores.items(), key=lambda x: x[1], reverse=True)
+
+            # Take the top n
+            for eid, score in sorted_experts[:n]:
+                top_experts_by_layer.append({
+                    "layer": l,
+                    "expert_id": eid,
+                    "importance_score": score
+                })
 
     return top_experts_by_layer
 
