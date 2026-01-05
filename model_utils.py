@@ -120,6 +120,8 @@ def register_pruning_hooks_token(model, refusal_drivers, gate_name):
     for layer_name, module in model.named_modules():
         if layer_name.lower().endswith(gate_name):
             layer_index = int(layer_name.split('.')[2])
+            if layer_index+1 > len(refusal_drivers):
+                break
             hook_fn = get_pruning_hook_experts(layer_name, refusal_drivers[layer_index])
             handle = module.register_forward_hook(hook_fn)
             hook_handles.append(handle)

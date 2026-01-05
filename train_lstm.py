@@ -129,7 +129,7 @@ def train(traces, labels, num_total_experts):
     return model
 
 if __name__ == "__main__":
-    model_id = 0
+    model_id = 1
 
     models = [
         # LLMs
@@ -164,10 +164,10 @@ if __name__ == "__main__":
     questions, labels = data_utils.load_twinset()
     prompts = data_utils.construct_prompt(tokenizer, questions, model_config.model_name)
 
-    ds = load_dataset("walledai/StrongREJECT")
-    harmful_questions = ds['train']['prompt']
-    harmful_prompts = data_utils.construct_prompt(tokenizer, harmful_questions, model_config.model_name)
-    harmful_labels = np.array([1]*len(harmful_questions))
+    # ds = load_dataset("walledai/StrongREJECT")
+    # harmful_questions = ds['train']['prompt']
+    # harmful_prompts = data_utils.construct_prompt(tokenizer, harmful_questions, model_config.model_name)
+    # harmful_labels = np.array([1]*len(harmful_questions))
 
 ##############################################################################
 # Print some example trigger token analyses for malicious and benign prompts #
@@ -185,22 +185,40 @@ if __name__ == "__main__":
 #################################################################################################
 
     for prompt_index in range(5):
-        print(f"Question: {harmful_prompts[prompt_index]}")
-        responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [harmful_prompts[prompt_index]], max_new_tokens=256, batch_size=128)
+        print(f"Question: {questions[prompt_index]}")
+        responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [questions[prompt_index]], max_new_tokens=256, batch_size=128)
         print(f"Response before pruning: {responses}")
         risk_scores = find_safety_experts.analyze_risk_trajectory(trained_lstm_model, traces, prompt_idx=prompt_index)
         result = find_safety_experts.print_risk_trajectory(tokenizer, questions[prompt_index], risk_scores)
         refusal_experts = traces[prompt_index][result]
-        print(f"Experts to prune: {refusal_experts}")
         # Example: Experts to prune: [[7, 15], [12, 8], [3, 6], [7, 1], [1, 9], [10, 14], [11, 3], [15, 5], [7, 5], [12, 5], [3, 12], [5, 7], [9, 8], [5, 0], [12, 11], [2, 14], [7, 11], [3, 15], [13, 10], [12, 7], [10, 3], [9, 1], [9, 6], [0, 14], [15, 2], [11, 7], [13, 10], [9, 13], [2, 14], [8, 9], [0, 5], [1, 5]]
         # Example shape: list of (num_layers, Top-K)
-        pruning_handles = model_utils.register_pruning_hooks_token(model, refusal_experts, model_config.gate_name)
-        responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [harmful_prompts[prompt_index]], max_new_tokens=256, batch_size=128)
-        print(f"Response after pruning: {responses}\n")
+        for index in range(len(refusal_experts)):
+            print(f"Experts to prune: {refusal_experts[:index+1]}")
+            pruning_handles = model_utils.register_pruning_hooks_token(model, refusal_experts[:index+1], model_config.gate_name)
+            responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [questions[prompt_index]], max_new_tokens=256, batch_size=128)
+            print(f"Response after pruning: {responses}\n")
 
-        for handle in pruning_handles:
+            for handle in pruning_handles:
                 handle.remove()
 
+
+    for prompt_index in range(5):
+        print(f"Question: {prompts[prompt_index]}")
+        responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
+        print(f"Response before pruning: {responses}")
+        risk_scores = find_safety_experts.analyze_risk_trajectory(trained_lstm_model, traces, prompt_idx=prompt_index)
+        result = find_safety_experts.print_risk_trajectory(tokenizer, prompts[prompt_index], risk_scores)
+        refusal_experts = traces[prompt_index][result]
+        for index in range(len(refusal_experts)):
+            print(f"Experts to prune: {refusal_experts[:index+1]}")
+            pruning_handles = model_utils.register_pruning_hooks_token(model, refusal_experts[:index+1], model_config.gate_name)
+            responses = model_utils.generate_output(model, model_config.model_name, tokenizer, [prompts[prompt_index]], max_new_tokens=256, batch_size=128)
+            print(f"Response after pruning: {responses}\n")
+
+            for handle in pruning_handles:
+                handle.remove()
+                
 ###############################################################################
 # Pruning layer-wise top experts with gradients.                              #
 # e.g., prune expert 1 in layer 5, expert 3 in layer 4, exper 12 in layer 34. #

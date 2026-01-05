@@ -25,12 +25,17 @@ def load_twinset():
     with open('/home/jtelintelo/SafetyExperts/twin_benign.txt', 'r', encoding='utf-8') as file:
         benign_questions = [line.strip() for line in file if line.strip()]
 
-    questions = malicious_questions + benign_questions
-    labels = np.array([1]*len(malicious_questions) + [0]*len(benign_questions))
+    ds = load_dataset("walledai/StrongREJECT")
+    harmful_questions = ds['train']['prompt'][:10]
+
+    print(len(harmful_questions))
+
+    questions = harmful_questions + malicious_questions + benign_questions
+    labels = np.array([1]*len(harmful_questions) + [1]*len(malicious_questions) + [0]*len(benign_questions))
 
     print(f'Number of benign prompts: {len(benign_questions)}')
 
-    print(f'Number of malicious prompts: {len(malicious_questions)}')
+    print(f'Number of malicious prompts: {len(harmful_questions) + len(malicious_questions)}')
 
     return questions, labels
 
