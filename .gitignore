@@ -1,5 +1,5 @@
 __pycache__/
 lstm_input/
-outputs/
+refusal_experts/
 slurm/
 trained_lstm_models/
