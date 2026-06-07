@@ -1,0 +1,5 @@
+__pycache__/
+lstm_input/
+outputs/
+slurm/
+trained_lstm_models/
